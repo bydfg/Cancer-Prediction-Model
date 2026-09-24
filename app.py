@@ -1,20 +1,55 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import os
+import pickle
 import joblib
+from cryptography.fernet import Fernet
 
 # 设置网页标题和图标
 st.set_page_config(page_title="癌症样本类型预测系统", page_icon="🩺", layout="wide")
 
-# 1. 加载模型和预处理器（利用缓存避免重复加载）
-@st.cache_resource
-def load_models():
-    preprocessor = joblib.load('preprocessor.pkl')
-    model = joblib.load('cancer_model.pkl')
-    le = joblib.load('label_encoder.pkl')
-    return preprocessor, model, le
+# 1. 核心安全模块：AES解密加载模型
+@st.cache_resource(show_spinner="正在进行安全解密并加载AI模型...")
+def load_secure_models():
+    try:
+        # 从 Streamlit Secrets 获取 AES 密钥
+        # 如果本地运行没有 Secrets，请参考下文本地测试指南
+        if "AES_KEY" not in st.secrets:
+            st.error("❌ 安全错误：未在 Streamlit Secrets 中找到 AES_KEY，无法解密模型。")
+            return None, None, None
+        
+        key = st.secrets["AES_KEY"].encode()
+        cipher = Fernet(key)
+        
+        # 获取当前 app.py 所在的绝对目录
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        
+        def decrypt_and_load(enc_filename):
+            file_path = os.path.join(BASE_DIR, enc_filename)
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"密文文件不存在: {file_path}")
+            with open(file_path, "rb") as f:
+                encrypted_data = f.read()
+            # 解密并反序列化（仅存活于内存中）
+            decrypted_data = cipher.decrypt(encrypted_data)
+            return pickle.loads(decrypted_data)
+        
+        # 依次解密三个核心文件
+        preprocessor = decrypt_and_load("preprocessor.enc")
+        model = decrypt_and_load("cancer_model.enc")
+        le = decrypt_and_load("label_encoder.enc")
+        
+        return preprocessor, model, le
+    except Exception as e:
+        st.error(f"模型解密失败！请检查密钥是否正确，或密文文件是否损坏。错误信息：{e}")
+        return None, None, None
 
-preprocessor, model, le = load_models()
+preprocessor, model, le = load_secure_models()
+
+# 如果模型加载失败，停止后续渲染（避免报错）
+if model is None:
+    st.stop()
 
 # 2. 页面布局设计
 st.title("🩺 基于集成学习的癌症样本类型预测系统")
@@ -100,7 +135,7 @@ import os
 import streamlit as st
 
 # ==========================================
-# 5. 展示已生成的图表及深度业务解读（防报错版）
+# 5. 展示已生成的图表及深度业务解读
 # ==========================================
 st.divider()
 st.header("📊 模型训练与评估成果")
